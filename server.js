@@ -47,7 +47,7 @@ app.post('/process_payment', async (req, res) => {
         };
 
         // Cria o pagamento no Mercado Pago
-        const requestOptions = { idempotencyKey: '...um-uuid-unico-aqui...' };
+        const requestOptions = { idempotencyKey: Buffer.from(Math.random().toString()).toString('base64') };
         const result = await payment.create({ body, requestOptions });
 
         // Devolve o resultado para o seu site (Aprovado, Recusado, Pendente)
@@ -64,6 +64,19 @@ app.post('/process_payment', async (req, res) => {
 // ==================================================================
 // Configure esta URL no painel do MP: https://seu-site.com/webhook
 app.post('/webhook', (req, res) => {
+    // Dentro do app.post('/process_payment'...)
+    const body = {
+        transaction_amount: Number(transaction_amount),
+        description: description,
+        payment_method_id: 'pix', // Força o método pix se for o caso
+        payer: {
+            email: payer.email,
+            identification: {
+                type: 'CPF', 
+                number: '12345678909' // Use um CPF válido para teste
+            }
+        }
+    };
     const topic = req.query.topic || req.query.type;
     const id = req.query.id || req.query['data.id'];
 
