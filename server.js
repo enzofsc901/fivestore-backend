@@ -1,4 +1,5 @@
 // server.js
+
 const express = require('express');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
@@ -14,7 +15,7 @@ app.use(cors()); // Permite que seu frontend (HTML) converse com este backend
 // ==================================================================
 // 1. Cole seu ACCESS TOKEN aqui (Pegue em: Seu Painel MP -> Credenciais de Produção)
 const client = new MercadoPagoConfig({ 
-    accessToken: 'APP_USR-2511799392504620-021916-1f7a6416393ff7704fab5f4c51532b58-3215406718', 
+    accessToken: process.env.ACCESS_TOKEN || 'SUA_CHAVE_AQUI', 
     options: { timeout: 5000 }
 });
 
