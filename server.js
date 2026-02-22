@@ -1,94 +1,72 @@
 // server.js
-
 const express = require('express');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
+const crypto = require('crypto'); // Biblioteca nativa do Node para gerar UUIDs
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000; // Importante para o Render
 
 app.use(express.json());
-app.use(cors()); // Permite que seu frontend (HTML) converse com este backend
+app.use(cors());
 
-// ==================================================================
-// CONFIGURAÇÃO DO MERCADO PAGO
-// ==================================================================
-// 1. Cole seu ACCESS TOKEN aqui (Pegue em: Seu Painel MP -> Credenciais de Produção)
+// --- CONFIGURAÇÃO ---
+// ATENÇÃO: Troque pelo seu NOVO Access Token gerado após o aviso de segurança
 const client = new MercadoPagoConfig({ 
-    accessToken: process.env.ACCESS_TOKEN || 'SUA_CHAVE_AQUI', 
+    accessToken: process.env.MP_ACCESS_TOKEN, // ISSO É SEGURO
     options: { timeout: 5000 }
 });
 
 const payment = new Payment(client);
 
-// ==================================================================
-// ROTA 1: PROCESSAR PAGAMENTO (Chamada pelo seu Frontend)
-// ==================================================================
 app.post('/process_payment', async (req, res) => {
     try {
         const { formData, transaction_amount, description, payer } = req.body;
 
-        const body = {
+        // 1. Montagem básica do pagamento
+        let paymentBody = {
             transaction_amount: Number(transaction_amount),
             description: description || 'Produto Five Store',
             payment_method_id: formData.payment_method_id,
             payer: {
-                email: payer.email,
-                first_name: payer.first_name, // Opcional se vier do formulário
+                email: payer.email || 'email_padrao@fivestore.com',
+                first_name: payer.first_name || 'Cliente',
                 identification: {
                     type: formData.payer.identification.type,
                     number: formData.payer.identification.number
                 }
-            },
-            // Informações obrigatórias para cartão de crédito
-            token: formData.token,
-            installments: Number(formData.installments),
-            issuer_id: formData.issuer_id,
+            }
         };
 
-        // Cria o pagamento no Mercado Pago
-        const requestOptions = { idempotencyKey: Buffer.from(Math.random().toString()).toString('base64') };
-        const result = await payment.create({ body, requestOptions });
+        // 2. Adiciona campos específicos apenas se for CARTÃO DE CRÉDITO
+        if (formData.payment_method_id !== 'pix' && formData.payment_method_id !== 'bolbradesco') {
+            paymentBody.token = formData.token;
+            paymentBody.installments = Number(formData.installments);
+            paymentBody.issuer_id = formData.issuer_id;
+        }
 
-        // Devolve o resultado para o seu site (Aprovado, Recusado, Pendente)
+        // 3. Gera uma chave única para esta transação (CRUCIAL)
+        const requestOptions = { 
+            idempotencyKey: crypto.randomUUID() 
+        };
+
+        // 4. Cria o pagamento
+        const result = await payment.create({ body: paymentBody, requestOptions });
+
+        // Retorna o resultado
+        console.log("Pagamento processado:", result.id);
         res.status(200).json(result);
 
     } catch (error) {
-        console.error("Erro no pagamento:", error);
-        res.status(500).json({ error: 'Erro ao processar pagamento', details: error.message });
+        console.error("Erro CRÍTICO no pagamento:", error);
+        
+        // Devolve o erro para o frontend entender o que houve
+        res.status(500).json({ 
+            status: 'error',
+            message: error.message,
+            api_response: error.cause || error 
+        });
     }
-});
-
-// ==================================================================
-// ROTA 2: WEBHOOK (Onde o Mercado Pago avisa sobre mudanças)
-// ==================================================================
-// Configure esta URL no painel do MP: https://seu-site.com/webhook
-app.post('/webhook', (req, res) => {
-    // Dentro do app.post('/process_payment'...)
-    const body = {
-        transaction_amount: Number(transaction_amount),
-        description: description,
-        payment_method_id: 'pix', // Força o método pix se for o caso
-        payer: {
-            email: payer.email,
-            identification: {
-                type: 'CPF', 
-                number: '12345678909' // Use um CPF válido para teste
-            }
-        }
-    };
-    const topic = req.query.topic || req.query.type;
-    const id = req.query.id || req.query['data.id'];
-
-    if (topic === 'payment') {
-        console.log(`🔔 Atualização de Pagamento recebida! ID: ${id}`);
-        // AQUI VOCÊ PODE:
-        // 1. Consultar o pagamento na API para ver o status atual
-        // 2. Atualizar o status no seu Firebase (Aprovado/Recusado)
-        // 3. Enviar e-mail para o cliente
-    }
-
-    res.status(200).send('OK');
 });
 
 app.listen(port, () => {
