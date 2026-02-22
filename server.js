@@ -1,20 +1,17 @@
-// server.js - CÓDIGO CORRIGIDO E SEGURO
+// server.js
 const express = require('express');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
-const crypto = require('crypto'); // Biblioteca nativa do Node para gerar chaves únicas
+const crypto = require('crypto');
 
 const app = express();
-const port = process.env.PORT || 3000; // Necessário para o Render
+const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(cors());
 
-// ==================================================================
-// CONFIGURAÇÃO
-// AVISO: Certifique-se de ter configurado a variável MP_ACCESS_TOKEN 
-// nas configurações do Render (Environment Variables).
-// ==================================================================
+// --- CONFIGURAÇÃO ---
+// Certifique-se de que MP_ACCESS_TOKEN está no Environment Variables do Render
 const client = new MercadoPagoConfig({ 
     accessToken: process.env.MP_ACCESS_TOKEN, 
     options: { timeout: 5000 }
@@ -24,63 +21,78 @@ const payment = new Payment(client);
 
 app.post('/process_payment', async (req, res) => {
     try {
+        // Log para ver o que está chegando (Ajuda a debugar no Render)
+        console.log("Recebendo pagamento:", JSON.stringify(req.body, null, 2));
+
         const { formData, transaction_amount, description, payer } = req.body;
 
-        // 1. Montagem básica do objeto de pagamento
-        // Garante que o email nunca vá vazio para não travar a API
-        const payerEmail = (payer && payer.email) ? payer.email : 'cliente_padrao@fivestore.com';
+        // --- PROTEÇÃO CONTRA DADOS VAZIOS ---
+        // 1. Garante que payer existe
+        const payerEmail = (payer && payer.email) ? payer.email : 'cliente@fivestore.com';
+        const payerFirstName = (payer && payer.first_name) ? payer.first_name : 'Cliente';
 
+        // 2. Extração segura da Identificação (CPF)
+        // O ?. impede o erro "Cannot read properties of undefined"
+        let docType = formData.payer?.identification?.type || 'CPF';
+        let docNumber = formData.payer?.identification?.number;
+
+        // Se o Brick não mandou o CPF (comum no Pix se não configurado),
+        // tentamos pegar do objeto 'payer' raiz ou usamos um genérico para teste
+        if (!docNumber && payer && payer.identification) {
+            docNumber = payer.identification.number;
+            docType = payer.identification.type;
+        }
+
+        // --- MONTAGEM DO BODY ---
         let paymentBody = {
             transaction_amount: Number(transaction_amount),
             description: description || 'Produto Five Store',
             payment_method_id: formData.payment_method_id,
             payer: {
                 email: payerEmail,
-                first_name: payer.first_name || 'Cliente',
-                identification: {
-                    type: formData.payer.identification.type,
-                    number: formData.payer.identification.number
-                }
+                first_name: payerFirstName,
+                // Só envia identification se tivermos um número, senão o MP recusa
+                ...(docNumber && {
+                    identification: {
+                        type: docType,
+                        number: docNumber
+                    }
+                })
             }
         };
 
-        // 2. Lógica Condicional: Se NÃO for Pix, adiciona dados do cartão
-        // Isso corrige o erro de "dados inválidos" ao tentar pagar com Pix enviando token nulo
+        // 3. Dados específicos de Cartão de Crédito
         if (formData.payment_method_id !== 'pix' && formData.payment_method_id !== 'bolbradesco') {
             paymentBody.token = formData.token;
             paymentBody.installments = Number(formData.installments);
             paymentBody.issuer_id = formData.issuer_id;
         }
 
-        // 3. Chave de Idempotência (CRUCIAL para evitar pagamentos duplicados ou recusados)
+        // 4. Chave Única
         const requestOptions = { 
             idempotencyKey: crypto.randomUUID() 
         };
 
-        // 4. Cria o pagamento no Mercado Pago
+        // 5. Criação
         const result = await payment.create({ body: paymentBody, requestOptions });
-
-        // Log de sucesso no terminal do servidor (aparece nos logs do Render)
-        console.log(`✅ Pagamento processado. Status: ${result.status} | ID: ${result.id}`);
-
-        // Retorna o resultado para o seu site
+        
+        console.log(`✅ Pagamento Criado: ${result.id} (${result.status})`);
         res.status(200).json(result);
 
     } catch (error) {
-        console.error("❌ Erro ao processar pagamento:", error);
+        console.error("❌ Erro no Server:", error);
         
-        // Retorna um erro formatado para que o frontend entenda e mostre o alerta
+        // Devolve o erro detalhado
         res.status(500).json({ 
             status: 'error',
-            message: error.message || 'Erro interno no servidor',
+            message: error.message || 'Erro interno',
             api_response: error.cause || error 
         });
     }
 });
 
-// Rota de teste para ver se o servidor está online
 app.get('/', (req, res) => {
-    res.send('Servidor Five Store está ON! 🚀');
+    res.send('API Five Store Online 🚀');
 });
 
 app.listen(port, () => {
