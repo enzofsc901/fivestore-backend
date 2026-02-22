@@ -113,4 +113,17 @@ app.post('/admin-login', (req, res) => {
         res.status(401).json({ auth: false, mensagem: "Senha incorreta!" });
     }
 });
+// =========================================================
+// ROTA PARA VERIFICAR SE O PIX/BOLETO FOI PAGO
+// =========================================================
+app.get('/check_payment/:id', async (req, res) => {
+    try {
+        // Vai no Mercado Pago buscar o status atualizado daquela transação
+        const result = await payment.get({ id: req.params.id });
+        res.json({ status: result.status });
+    } catch (error) {
+        console.error("Erro ao verificar pagamento:", error);
+        res.status(500).json({ error: 'Erro ao buscar pagamento' });
+    }
+});
 app.listen(port, () => { console.log(`🚀 Servidor rodando na porta ${port}`); });
