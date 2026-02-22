@@ -98,5 +98,19 @@ app.post('/process_payment', async (req, res) => {
         res.status(500).json({ status: 'error', message: error.message || 'Erro interno' });
     }
 });
+// =========================================================
+// ROTA DE LOGIN DO ADMIN
+// =========================================================
+app.post('/admin-login', (req, res) => {
+    const { senha } = req.body;
+    // Puxa a senha escondida no Render
+    const senhaCorreta = process.env.ADMIN_PASSWORD;
 
+    if (senha === senhaCorreta) {
+        // Se a senha bater, devolve autorização
+        res.json({ auth: true, mensagem: "Acesso Liberado!" });
+    } else {
+        res.status(401).json({ auth: false, mensagem: "Senha incorreta!" });
+    }
+});
 app.listen(port, () => { console.log(`🚀 Servidor rodando na porta ${port}`); });
