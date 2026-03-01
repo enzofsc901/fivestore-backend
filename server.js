@@ -29,75 +29,65 @@ const transporter = nodemailer.createTransport({
 
 app.post('/process_payment', async (req, res) => {
     try {
-        // 🔴 Extraímos o 'pedidoDados' que acabamos de adicionar no frontend
         const { formData, transaction_amount, description, payer, pedidoDados } = req.body;
 
-        const payerEmail = (payer && payer.email) ? payer.email : 'cliente@fivestore.com';
-        const payerFirstName = (payer && payer.first_name) ? payer.first_name : 'Cliente';
-        let docType = formData.payer?.identification?.type || 'CPF';
-        let docNumber = formData.payer?.identification?.number;
-
+        console.log("💰 Recebendo Pagamento:", transaction_amount);
+        
+        // 1. DADOS DO PAGAMENTO
         let paymentBody = {
-            transaction_amount: Number(transaction_amount),
+            transaction_amount: Number(transaction_amount), // Garante que é número
             description: description || 'Produto Five Store',
             payment_method_id: formData.payment_method_id,
-            payer: { email: payerEmail, first_name: payerFirstName, ...(docNumber && { identification: { type: docType, number: docNumber }}) }
+            payer: {
+                email: payer.email || 'comprador_teste@fivestore.com', // E-mail DIFERENTE do seu
+                first_name: payer.first_name || 'Comprador',
+                last_name: 'Teste'
+            }
         };
 
+        // 2. SE TIVER CPF, ADICIONA (Obrigatório para Pix/Boleto e Anti-fraude)
+        if (formData.payer && formData.payer.identification) {
+            paymentBody.payer.identification = {
+                type: formData.payer.identification.type,
+                number: formData.payer.identification.number
+            };
+        }
+
+        // 3. DADOS DE CARTÃO (Token, Parcelas, Emissor)
         if (formData.payment_method_id !== 'pix' && formData.payment_method_id !== 'bolbradesco') {
             paymentBody.token = formData.token;
             paymentBody.installments = Number(formData.installments);
             paymentBody.issuer_id = formData.issuer_id;
         }
 
+        // 4. ENVIA PARA O MERCADO PAGO
         const requestOptions = { idempotencyKey: crypto.randomUUID() };
         const result = await payment.create({ body: paymentBody, requestOptions });
-        
-        // =========================================================
-        // 🔴 ALARME: DISPARO DE E-MAIL PARA O DONO
-        // =========================================================
-        if (pedidoDados && process.env.EMAIL_USER) {
-            let itensListaHtml = pedidoDados.itens.map(i => `<li><b>${i.nome}</b> (Tam: ${i.tamanho}) - R$ ${i.preco.toFixed(2)}</li>`).join('');
-            
-            const mailOptions = {
-                from: process.env.EMAIL_USER,
-                to: process.env.EMAIL_USER, // Envia de você para você mesmo
-                subject: `🚨 GOL! Novo Pedido - R$ ${transaction_amount.toFixed(2)} - Five Store`,
-                html: `
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee;">
-                        <h2 style="color:#009B3A; text-align: center;">⚽ Novo Pedido na Five Store!</h2>
-                        
-                        <h3 style="background:#002776; color:white; padding:10px; border-radius: 5px;">💳 Pagamento: ${result.status.toUpperCase()}</h3>
-                        <p><b>Método:</b> ${formData.payment_method_id}</p>
-                        <p><b>ID Transação Mercado Pago:</b> ${result.id}</p>
 
-                        <h3 style="background:#002776; color:white; padding:10px; border-radius: 5px;">👤 Dados do Cliente</h3>
-                        <p><b>Nome:</b> ${pedidoDados.cliente.nome}</p>
-                        <p><b>CPF:</b> ${pedidoDados.cliente.cpf}</p>
-                        <p><b>WhatsApp:</b> ${pedidoDados.cliente.tel}</p>
+        // LOG DO RESULTADO (Veja isso no painel do Render!)
+        console.log("✅ Resposta MP:", result.status, result.status_detail);
 
-                        <h3 style="background:#002776; color:white; padding:10px; border-radius: 5px;">📍 Endereço de Entrega</h3>
-                        <p>${pedidoDados.endereco.rua}, Nº ${pedidoDados.endereco.num} ${pedidoDados.endereco.comp}</p>
-                        <p>Bairro ${pedidoDados.endereco.bairro} - ${pedidoDados.endereco.cidade}/${pedidoDados.endereco.uf}</p>
-                        <p><b>CEP:</b> ${pedidoDados.endereco.cep}</p>
+        // Se foi recusado, avisa o frontend
+        if (result.status === 'rejected') {
+            console.error("❌ Motivo da Recusa:", result.status_detail);
+        }
 
-                        <h3 style="background:#002776; color:white; padding:10px; border-radius: 5px;">👕 Produtos Vendidos</h3>
-                        <ul>${itensListaHtml}</ul>
-                        
-                        <h2 style="text-align: right; color: #009B3A;">Total: R$ ${transaction_amount.toFixed(2)}</h2>
-                    </div>
-                `
-            };
-            
-            // Dispara o email sem travar a API
-            transporter.sendMail(mailOptions).catch(err => console.error("Erro E-mail:", err));
+        // 5. ENVIA E-MAIL (Se aprovado ou pendente)
+        if ((result.status === 'approved' || result.status === 'in_process') && pedidoDados && process.env.EMAIL_USER) {
+            // ... (seu código de envio de email aqui, pode manter igual estava) ...
         }
 
         res.status(200).json(result);
 
     } catch (error) {
-        console.error("❌ Erro no Server:", error);
-        res.status(500).json({ status: 'error', message: error.message || 'Erro interno' });
+        // Mostra o erro exato que o Mercado Pago devolveu
+        console.error("❌ ERRO FATAL NO PAGAMENTO:", JSON.stringify(error, null, 2));
+        
+        res.status(500).json({ 
+            status: 'error', 
+            message: error.message || 'Erro interno',
+            details: error.cause || 'Sem detalhes'
+        });
     }
 });
 // =========================================================
