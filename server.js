@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer'); // 🔴 Importação do Nodemailer
 
 const app = express();
 const port = process.env.PORT || 3000;
+const axios = require('axios'); // Adicione isso no topo do arquivo junto com os outros require
 
 app.use(express.json());
 app.use(cors());
@@ -127,63 +128,55 @@ app.get('/check_payment/:id', async (req, res) => {
     }
 });
 // =========================================================
-// ROTA DE CÁLCULO DE FRETE (MELHOR ENVIO)
+// ROTA DE CÁLCULO DE FRETE (MELHOR ENVIO - VERSÃO AXIOS)
 // =========================================================
 app.post('/calcular-frete', async (req, res) => {
     const { cepDestino, quantidade } = req.body;
 
+    // Se não tiver Token configurado, avisa logo
+    if (!process.env.MELHOR_ENVIO_TOKEN) {
+        console.error("ERRO: Token MELHOR_ENVIO_TOKEN não configurado no Render.");
+        return res.status(500).json({ error: 'Token de frete não configurado no servidor.' });
+    }
+
     // Regras de Negócio (Five Store)
     const peso = quantidade * 0.3;
-    // Se 3 ou mais unidades, altura 12cm, senão 4cm. Largura 15, Comp 20.
     const altura = quantidade >= 3 ? 12 : 4; 
     const largura = 15;
     const comprimento = 20;
 
-    // Token do Melhor Envio (SandBox ou Produção dependendo da sua conta)
-    // URL Produção: https://melhorenvio.com.br/api/v2/me/shipment/calculate
-    // URL Sandbox: https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate
     const apiUrl = 'https://melhorenvio.com.br/api/v2/me/shipment/calculate';
+    // Se estiver testando em Sandbox, mude para: 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate'
 
     try {
-        const response = await fetch(apiUrl, {
-            method: 'POST',
+        const response = await axios.post(apiUrl, {
+            from: { postal_code: "38700000" }, // Patos de Minas
+            to: { postal_code: cepDestino },
+            package: {
+                height: altura,
+                width: largura,
+                length: comprimento,
+                weight: peso
+            },
+            options: { receipt: false, own_hand: false }
+        }, {
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${process.env.MELHOR_ENVIO_TOKEN}`,
                 'User-Agent': 'FiveStore/1.0 (suportefivestorebr@gmail.com)'
-            },
-            body: JSON.stringify({
-                from: { postal_code: "38700000" }, // Patos de Minas
-                to: { postal_code: cepDestino },
-                package: {
-                    height: altura,
-                    width: largura,
-                    length: comprimento,
-                    weight: peso
-                },
-                options: {
-                    receipt: false,
-                    own_hand: false
-                }
-            })
+            }
         });
 
-        if (!response.ok) {
-            const err = await response.text();
-            throw new Error(`Erro API Melhor Envio: ${err}`);
-        }
-
-        const data = await response.json();
+        const data = response.data;
         
-        // Filtra apenas as transportadoras desejadas (Correios e Jadlog) e retorna limpo
-        // Ignora opções com erro ou preço nulo
+        // Filtra opções válidas
         const opcoesFiltradas = data
             .filter(opt => !opt.error && opt.price)
             .map(opt => ({
                 id: opt.id,
-                nome: opt.name, // ex: PAC, SEDEX, .Com
-                empresa: opt.company.name, // ex: Correios, Jadlog
+                nome: opt.name, 
+                empresa: opt.company.name,
                 preco: parseFloat(opt.custom_price || opt.price),
                 prazo: opt.delivery_time
             }));
@@ -191,8 +184,12 @@ app.post('/calcular-frete', async (req, res) => {
         res.json(opcoesFiltradas);
 
     } catch (error) {
-        console.error("Erro Frete:", error);
-        res.status(500).json({ error: 'Falha ao calcular frete' });
+        // Log detalhado do erro no terminal do Render
+        console.error("❌ ERRO FRETE:", error.response ? error.response.data : error.message);
+        res.status(500).json({ 
+            error: 'Erro ao calcular frete', 
+            detalhes: error.response ? error.response.data : error.message 
+        });
     }
 });
 app.listen(port, () => { console.log(`🚀 Servidor rodando na porta ${port}`); });
