@@ -128,7 +128,7 @@ app.get('/check_payment/:id', async (req, res) => {
     }
 });
 // =========================================================
-// ROTA DE CÁLCULO DE FRETE (CORRIGIDA - COM HÍFEN)
+// ROTA DE CÁLCULO DE FRETE (CORRIGIDA - SEM TRAÇOS + CEP RUA)
 // =========================================================
 app.post('/calcular-frete', async (req, res) => {
     const { cepDestino, quantidade } = req.body;
@@ -137,33 +137,33 @@ app.post('/calcular-frete', async (req, res) => {
         return res.status(500).json({ error: 'Token de frete não configurado.' });
     }
 
-    // FUNÇÃO AUXILIAR: Formata CEP para "00000-000" (Obrigatorio para Melhor Envio)
-    const formatarCep = (cep) => {
-        if (!cep) return "";
-        const limpo = cep.toString().replace(/\D/g, ''); // Tira tudo que não é número
-        return limpo.replace(/^(\d{5})(\d{3})/, "$1-$2"); // Coloca o traço
-    };
+    // 1. LIMPEZA DE DADOS (Remove traços, espaços e garante string)
+    const limparCep = (valor) => String(valor).replace(/\D/g, '');
 
-    // Dados Fixos e Variáveis
-    const cepOrigem = "38700-000"; // Patos de Minas (Com traço)
-    const cepDestinoFormatado = formatarCep(cepDestino);
+    // 2. CEP DE ORIGEM (USAR CEP DE RUA EM PATOS DE MINAS)
+    // CEP Geral (38700000) costuma dar erro na Jadlog/Azul. 
+    // Usando 38700001 (Rua Major Gote - Centro) para garantir cálculo.
+    const cepOrigem = "38700001"; 
     
+    const cepDestinoLimpo = limparCep(cepDestino);
+
     // Regras de Cubagem
-    const peso = quantidade * 0.3;
+    const peso = quantidade * 0.3; 
     const altura = quantidade >= 3 ? 12 : 4; 
     const largura = 15;
     const comprimento = 20;
 
-    // URL: Use a de Produção se o Token for de Produção.
-    // Se seu token for Sandbox, mude para: 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate'
+    // IMPORTANTE: VERIFIQUE SE SEU TOKEN É SANDBOX OU PRODUÇÃO
+    // Se o token for de Sandbox, use: 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate'
+    // Se o token for de Produção, use: 'https://melhorenvio.com.br/api/v2/me/shipment/calculate'
     const apiUrl = 'https://melhorenvio.com.br/api/v2/me/shipment/calculate';
 
     try {
-        console.log(`🚚 Calculando frete: De ${cepOrigem} para ${cepDestinoFormatado} | Peso: ${peso}kg`);
+        console.log(`🚚 Calculando: De ${cepOrigem} para ${cepDestinoLimpo} | Peso: ${peso}kg`);
 
         const response = await axios.post(apiUrl, {
-            from: { postal_code: cepOrigem }, 
-            to: { postal_code: cepDestinoFormatado },
+            from: { postal_code: cepOrigem }, // Enviando SEM traço
+            to: { postal_code: cepDestinoLimpo }, // Enviando SEM traço
             package: {
                 height: altura,
                 width: largura,
@@ -173,7 +173,7 @@ app.post('/calcular-frete', async (req, res) => {
             options: { 
                 receipt: false, 
                 own_hand: false,
-                insurance_value: (quantidade * 133.00) // Opcional: Declara valor para seguro (R$ 133 por camisa)
+                insurance_value: (quantidade * 50.00) // Valor declarado seguro
             }
         }, {
             headers: {
@@ -186,6 +186,7 @@ app.post('/calcular-frete', async (req, res) => {
 
         const data = response.data;
         
+        // Filtra opções válidas
         const opcoesFiltradas = data
             .filter(opt => !opt.error && opt.price)
             .map(opt => ({
@@ -199,9 +200,9 @@ app.post('/calcular-frete', async (req, res) => {
         res.json(opcoesFiltradas);
 
     } catch (error) {
-        // Log detalhado para debug
-        const erroMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-        console.error("❌ ERRO MELHOR ENVIO:", erroMsg);
+        // Log para identificar o erro exato
+        const erroDetalhe = error.response ? JSON.stringify(error.response.data) : error.message;
+        console.error("❌ ERRO MELHOR ENVIO:", erroDetalhe);
         
         res.status(500).json({ 
             error: 'Erro ao calcular frete', 
