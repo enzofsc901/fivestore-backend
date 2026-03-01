@@ -8,8 +8,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 const axios = require('axios'); // Adicione isso no topo do arquivo junto com os outros require
 
-app.use(express.json());
-app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cors()); // Garante que o CORS continue ativo
 
 // --- CONFIGURAÇÃO MERCADO PAGO ---
 const client = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN, options: { timeout: 5000 }});
