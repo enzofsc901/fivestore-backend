@@ -128,37 +128,53 @@ app.get('/check_payment/:id', async (req, res) => {
     }
 });
 // =========================================================
-// ROTA DE CÁLCULO DE FRETE (MELHOR ENVIO - VERSÃO AXIOS)
+// ROTA DE CÁLCULO DE FRETE (CORRIGIDA - COM HÍFEN)
 // =========================================================
 app.post('/calcular-frete', async (req, res) => {
     const { cepDestino, quantidade } = req.body;
 
-    // Se não tiver Token configurado, avisa logo
     if (!process.env.MELHOR_ENVIO_TOKEN) {
-        console.error("ERRO: Token MELHOR_ENVIO_TOKEN não configurado no Render.");
-        return res.status(500).json({ error: 'Token de frete não configurado no servidor.' });
+        return res.status(500).json({ error: 'Token de frete não configurado.' });
     }
 
-    // Regras de Negócio (Five Store)
+    // FUNÇÃO AUXILIAR: Formata CEP para "00000-000" (Obrigatorio para Melhor Envio)
+    const formatarCep = (cep) => {
+        if (!cep) return "";
+        const limpo = cep.toString().replace(/\D/g, ''); // Tira tudo que não é número
+        return limpo.replace(/^(\d{5})(\d{3})/, "$1-$2"); // Coloca o traço
+    };
+
+    // Dados Fixos e Variáveis
+    const cepOrigem = "38700-000"; // Patos de Minas (Com traço)
+    const cepDestinoFormatado = formatarCep(cepDestino);
+    
+    // Regras de Cubagem
     const peso = quantidade * 0.3;
     const altura = quantidade >= 3 ? 12 : 4; 
     const largura = 15;
     const comprimento = 20;
 
+    // URL: Use a de Produção se o Token for de Produção.
+    // Se seu token for Sandbox, mude para: 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate'
     const apiUrl = 'https://melhorenvio.com.br/api/v2/me/shipment/calculate';
-    // Se estiver testando em Sandbox, mude para: 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate'
 
     try {
+        console.log(`🚚 Calculando frete: De ${cepOrigem} para ${cepDestinoFormatado} | Peso: ${peso}kg`);
+
         const response = await axios.post(apiUrl, {
-            from: { postal_code: "38700000" }, // Patos de Minas
-            to: { postal_code: cepDestino },
+            from: { postal_code: cepOrigem }, 
+            to: { postal_code: cepDestinoFormatado },
             package: {
                 height: altura,
                 width: largura,
                 length: comprimento,
                 weight: peso
             },
-            options: { receipt: false, own_hand: false }
+            options: { 
+                receipt: false, 
+                own_hand: false,
+                insurance_value: (quantidade * 133.00) // Opcional: Declara valor para seguro (R$ 133 por camisa)
+            }
         }, {
             headers: {
                 'Accept': 'application/json',
@@ -170,7 +186,6 @@ app.post('/calcular-frete', async (req, res) => {
 
         const data = response.data;
         
-        // Filtra opções válidas
         const opcoesFiltradas = data
             .filter(opt => !opt.error && opt.price)
             .map(opt => ({
@@ -184,8 +199,10 @@ app.post('/calcular-frete', async (req, res) => {
         res.json(opcoesFiltradas);
 
     } catch (error) {
-        // Log detalhado do erro no terminal do Render
-        console.error("❌ ERRO FRETE:", error.response ? error.response.data : error.message);
+        // Log detalhado para debug
+        const erroMsg = error.response ? JSON.stringify(error.response.data) : error.message;
+        console.error("❌ ERRO MELHOR ENVIO:", erroMsg);
+        
         res.status(500).json({ 
             error: 'Erro ao calcular frete', 
             detalhes: error.response ? error.response.data : error.message 
